@@ -1,9 +1,17 @@
 import express, {Request, Response} from 'express';
-import {Application, ApplicationModel} from '../models/application';
 import multer from 'multer';
 import {promisify} from 'util';
 import fs from 'fs';
-import {brokerWrapper, ProjectNewRequestPublisher} from 'flaky-common';
+import {
+  Application,
+  ApplicationModel,
+  brokerWrapper,
+  ProjectReadyPublisher,
+  TestRun,
+  TestRunModel,
+} from 'flaky-common';
+import {ProjectNewPublisher} from '../messages/publishers/project-new-publisher';
+import {mongoose} from '@typegoose/typegoose';
 const exec = promisify(require('child_process').exec);
 
 const router = express.Router();
@@ -24,35 +32,81 @@ router.post(
   '/application',
   upload.single('projectFile'),
   async (req: Request, res: Response) => {
-    if (!req.file) throw new Error('File not found');
+    if (!req.file) throw new Error('File Not Found');
+    const {commitId, testMethodName, configurationFolder, moduleName} =
+      req.body;
+    let name = req.body.name;
+    if (moduleName !== '.') name += '-' + moduleName.replace('/', '-');
+    name = name.toLowerCase();
     const dirName = req.file.path.replace('.tar.gz', '');
-    const {stdout, err} = await exec(
-      `mkdir ${dirName} && tar -xvf ${req.file.path} -C ${dirName} --strip-components 1`
+    await exec(
+      `mkdir ${dirName} && tar -xvf ${req.file.path} -C ${dirName} --strip-components 1`,
+      {maxBuffer: 1024 * 1024 * 1024}
     );
     fs.unlinkSync(req.file.path);
-    const newProject: Application = {
-      name: req.body.name,
-      version: req.body.version,
-      projectPath: dirName,
-      testMethodName: req.body.testMethodName,
+
+    const testRun: TestRun = {
+      testMethodName,
+      configFolderPath: configurationFolder,
     };
-    if (req.body.gitUrl) {
-      newProject.gitUrl = req.body.gitUrl;
-      newProject.commitId = req.body.commitId;
+    const newTestRun = await TestRunModel.create(testRun);
+
+    const existingApplication = await ApplicationModel.findOne({
+      name,
+      commitId,
+      moduleName,
+    });
+
+    if (existingApplication) {
+      existingApplication.testRuns!.push(newTestRun._id);
+      existingApplication.save();
+      new ProjectReadyPublisher(brokerWrapper).publish({
+        projectId: existingApplication._id,
+        testRunId: newTestRun._id,
+        name,
+        commitId,
+        projectPath: existingApplication.projectPath,
+        testMethodName,
+        configurationFolder,
+        moduleName,
+      });
+      res.json({
+        message: 'success',
+        data: {
+          projectId: existingApplication._id,
+          testRunId: newTestRun._id,
+        },
+      });
+    } else {
+      const newProject: Application = {
+        name,
+        projectPath: dirName,
+        commitId,
+        testRuns: [newTestRun._id],
+        moduleName,
+      };
+      if (req.body.gitUrl) {
+        newProject.gitUrl = req.body.gitUrl;
+      }
+      const newApp = await ApplicationModel.create(newProject);
+      new ProjectNewPublisher(brokerWrapper).publish({
+        projectId: newApp._id,
+        testRunId: newTestRun._id,
+        projectPath: newApp.projectPath,
+        name: newApp.name,
+        commitId: newApp.commitId,
+        testMethodName,
+        configurationFolder,
+        moduleName,
+      });
+      res.json({
+        message: 'success',
+        data: {
+          projectId: newApp._id,
+          testRunId: newTestRun._id,
+        },
+      });
     }
-    const newApp = await ApplicationModel.create(newProject);
-    new ProjectNewRequestPublisher(brokerWrapper).publish({
-      id: newApp.id,
-      projectPath: newApp.projectPath,
-      name: newApp.name,
-      version: newApp.version,
-    });
-    res.json({
-      message: 'success',
-      data: {
-        application: newApp,
-      },
-    });
   }
 );
 

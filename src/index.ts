@@ -1,14 +1,6 @@
-import {brokerWrapper} from 'flaky-common';
+import {brokerWrapper, FLAKY_EXCHANGE_NAME, getCompleteUri} from 'flaky-common';
 import mongoose from 'mongoose';
 import {app} from './app';
-
-function getCompleteUri(
-  uri: string,
-  username: string,
-  password: string
-): string {
-  return uri.replace('<username>', username).replace('<password>', password);
-}
 
 async function start() {
   if (!process.env.FLAKY_MONGO_URI)
@@ -34,7 +26,7 @@ async function start() {
     process.env.FLAKY_RABBITMQ_PASSWORD
   );
   try {
-    await brokerWrapper.connect(rabbitUri, 'mytopic', 'topic');
+    await brokerWrapper.connect(rabbitUri, FLAKY_EXCHANGE_NAME, 'topic');
     await mongoose.connect(mongoUri);
     app.listen(3000, () => {
       console.log('Server started on port 3000');
