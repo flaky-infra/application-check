@@ -28,7 +28,7 @@
   "dependencies": {
     "@typegoose/typegoose": "^9.10.1",
     "express": "^4.18.1",
-    "flaky-common": "^0.0.3",
+    "flaky-common": "^0.2.9",
     "mongoose": "^6.4.3",
     "multer": "^1.4.5-lts.1"
   }
